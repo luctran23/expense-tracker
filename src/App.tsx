@@ -585,23 +585,23 @@ export default function App() {
                       >
                         <div className="flex items-center gap-4">
                           <div 
-                            className="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-sm"
+                            className="w-6 h-6 rounded-2xl flex items-center justify-center text-white shadow-sm"
                             style={{ backgroundColor: CATEGORY_COLORS[exp.category] }}
                           >
-                            <PieChartIcon size={24} />
+                            <PieChartIcon size={12} />
                           </div>
                           <div>
                             <h4 className="font-bold text-slate-800">{exp.note || t.categories[exp.category]}</h4>
                             <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
                               <span className="font-medium px-2 py-0.5 bg-slate-100 rounded-full">{t.categories[exp.category]}</span>
                               <span>•</span>
-                              <span>{format(parseISO(exp.date), 'dd MMM yyyy', { locale: language === 'vi' ? vi : enUS })}</span>
+                              <span>{format(parseISO(exp.date), 'dd/MM/yyyy')}</span>
                             </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-4">
                           <span className="text-lg font-bold text-slate-800">{formatCurrency(exp.amount, language)}</span>
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-1">
                             <button 
                               onClick={() => handleEditExpense(exp)}
                               className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
