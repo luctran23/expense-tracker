@@ -20,6 +20,19 @@ export interface Expense {
   note: string;
 }
 
+export type DebtType = 'owed' | 'lent';
+
+export interface Debt {
+  id: string;
+  name: string; // person or entity
+  amount: number;
+  date: string; // ISO string - when recorded
+  dueDate?: string | null; // optional due date
+  type: DebtType; // owed = you owe them, lent = they owe you
+  status?: 'open' | 'paid' | 'overdue';
+  note?: string;
+}
+
 export interface Budget {
   amount: number;
   month: string; // YYYY-MM
@@ -62,6 +75,15 @@ export interface Translations {
   month: string;
   year: string;
   timeframe: string;
+  debts: string;
+  addDebt: string;
+  editDebt: string;
+  noDebts: string;
+  debtTypeOwed: string;
+  debtTypeLent: string;
+  debtStatusOpen: string;
+  debtStatusPaid: string;
+  debtStatusOverdue: string;
 }
 
 export const translations: Record<Language, Translations> = {
@@ -111,6 +133,16 @@ export const translations: Record<Language, Translations> = {
     month: 'Month',
     year: 'Year',
     timeframe: 'Timeframe'
+    ,
+    debts: 'Debts',
+    addDebt: 'Add Debt',
+    editDebt: 'Edit Debt',
+    noDebts: 'No debts found.',
+    debtTypeOwed: 'Owed',
+    debtTypeLent: 'Lent',
+    debtStatusOpen: 'Open',
+    debtStatusPaid: 'Paid',
+    debtStatusOverdue: 'Overdue'
   },
   vi: {
     title: 'Quản lý Chi tiêu',
@@ -158,5 +190,15 @@ export const translations: Record<Language, Translations> = {
     month: 'Tháng',
     year: 'Năm',
     timeframe: 'Khoảng thời gian'
+    ,
+    debts: 'Công nợ',
+    addDebt: 'Thêm công nợ',
+    editDebt: 'Sửa công nợ',
+    noDebts: 'Không tìm thấy công nợ nào.',
+    debtTypeOwed: 'Nợ',
+    debtTypeLent: 'Cho vay',
+    debtStatusOpen: 'Mở',
+    debtStatusPaid: 'Đã trả',
+    debtStatusOverdue: 'Quá hạn'
   }
 };

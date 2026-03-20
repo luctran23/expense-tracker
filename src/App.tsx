@@ -47,6 +47,7 @@ import {
   Category, 
   Expense, 
   Budget, 
+  Debt,
   translations, 
   Translations 
 } from './types';
@@ -69,12 +70,15 @@ const db = getFirestore(app);
 export default function App() {
   // State
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [debts, setDebts] = useState<Debt[]>([]);
   const [budget, setBudget] = useState<Budget>({ amount: 0, month: format(new Date(), 'yyyy-MM') });
   const [language, setLanguage] = useState<Language>('en');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'expenses' | 'settings'>('dashboard');
   const [dashboardTimeframe, setDashboardTimeframe] = useState<'week' | 'month' | 'year'>('month');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [isDebtFormOpen, setIsDebtFormOpen] = useState(false);
+  const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingBudget, setSavingBudget] = useState(false);
   const [budgetMessage, setBudgetMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -101,6 +105,12 @@ export default function App() {
           ...doc.data()
         })) as Expense[];
         setExpenses(expensesData);
+
+        // Load debts from Firebase
+        const debtsCollection = collection(db, 'debts');
+        const debtsSnapshot = await getDocs(debtsCollection);
+        const debtsData = debtsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Debt[];
+        setDebts(debtsData);
 
         // Load other data: try Firestore `budget` (doc id = current month), fallback to localStorage
         const savedLang = localStorage.getItem('language');
@@ -129,11 +139,13 @@ export default function App() {
         // Fallback to localStorage
         const savedExpenses = localStorage.getItem('expenses');
         const savedBudget = localStorage.getItem('budget');
+        const savedDebts = localStorage.getItem('debts');
         const savedLang = localStorage.getItem('language');
         const savedTimeframe = localStorage.getItem('dashboardTimeframe');
 
         if (savedExpenses) setExpenses(JSON.parse(savedExpenses));
         if (savedBudget) setBudget(JSON.parse(savedBudget));
+        if (savedDebts) setDebts(JSON.parse(savedDebts));
         if (savedLang) setLanguage(savedLang as Language);
         if (savedTimeframe) setDashboardTimeframe(savedTimeframe as 'week' | 'month' | 'year');
       } finally {
@@ -148,6 +160,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('expenses', JSON.stringify(expenses));
   }, [expenses]);
+
+  useEffect(() => {
+    localStorage.setItem('debts', JSON.stringify(debts));
+  }, [debts]);
 
   // Explicit budget save handler — call when user clicks Save
   const saveBudgetToFirestore = async () => {
@@ -223,6 +239,9 @@ export default function App() {
   }, [dashboardExpenses, t]);
 
   const highestCategory = spendingByCategory[0];
+
+  const totalDebtsOwed = useMemo(() => debts.filter(d => d.type === 'owed').reduce((s, d) => s + d.amount, 0), [debts]);
+  const totalDebtsLent = useMemo(() => debts.filter(d => d.type === 'lent').reduce((s, d) => s + d.amount, 0), [debts]);
 
   const trendData = useMemo(() => {
     const now = new Date();
@@ -332,6 +351,54 @@ export default function App() {
     setIsFormOpen(true);
   };
 
+  // Debt handlers
+  const handleAddDebt = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget as HTMLFormElement);
+    const newDebt: Debt = {
+      id: editingDebt?.id || crypto.randomUUID(),
+      name: String(formData.get('name') || ''),
+      amount: Number(formData.get('amount')),
+      date: String(formData.get('date')),
+      dueDate: formData.get('dueDate') ? String(formData.get('dueDate')) : null,
+      type: (formData.get('type') as any) || 'owed',
+      status: (formData.get('status') as any) || 'open',
+      note: String(formData.get('note') || '')
+    };
+
+    try {
+      if (editingDebt) {
+        await setDoc(doc(db, 'debts', newDebt.id), newDebt);
+        setDebts(prev => prev.map(d => d.id === editingDebt.id ? newDebt : d));
+      } else {
+        await setDoc(doc(db, 'debts', newDebt.id), newDebt);
+        setDebts(prev => [...prev, newDebt]);
+      }
+      setIsDebtFormOpen(false);
+      setEditingDebt(null);
+    } catch (error) {
+      console.error('Error saving debt:', error);
+      if (editingDebt) {
+        setDebts(prev => prev.map(d => d.id === editingDebt.id ? newDebt : d));
+      } else {
+        setDebts(prev => [...prev, newDebt]);
+      }
+      setIsDebtFormOpen(false);
+      setEditingDebt(null);
+    }
+  };
+
+  const handleDeleteDebt = (id: string) => {
+    if (confirm(language === 'vi' ? 'Bạn có chắc muốn xóa?' : 'Are you sure you want to delete?')) {
+      setDebts(prev => prev.filter(d => d.id !== id));
+    }
+  };
+
+  const handleEditDebt = (debt: Debt) => {
+    setEditingDebt(debt);
+    setIsDebtFormOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-24">
       {loading ? (
@@ -352,13 +419,38 @@ export default function App() {
                 </div>
                 <h1 className="text-xl font-bold tracking-tight text-slate-800">{t.title}</h1>
               </div>
-              <button 
-                onClick={() => { setEditingExpense(null); setIsFormOpen(true); }}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-md active:scale-95"
-              >
-                <Plus size={20} />
-                <span className="hidden sm:inline font-medium">{t.addExpense}</span>
-              </button>
+
+              {/* Debts summary */}
+              <div className="mt-6 flex gap-4">
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex-1">
+                  <p className="text-slate-500 text-sm font-medium uppercase tracking-wider">{t.debts}</p>
+                  <div className="flex items-center justify-between mt-2">
+                    <div>
+                      <p className="text-xs text-slate-500">{t.debtTypeOwed}</p>
+                      <h3 className="text-lg font-bold">{formatCurrency(totalDebtsOwed, language)}</h3>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">{t.debtTypeLent}</p>
+                      <h3 className="text-lg font-bold">{formatCurrency(totalDebtsLent, language)}</h3>
+                    </div>
+                  </div>
+                </div>
+              </div>
+                <button 
+                  onClick={() => {
+                    if (activeTab === 'debts') {
+                      setEditingDebt(null);
+                      setIsDebtFormOpen(true);
+                    } else {
+                      setEditingExpense(null);
+                      setIsFormOpen(true);
+                    }
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-md active:scale-95"
+                >
+                  <Plus size={20} />
+                  <span className="hidden sm:inline font-medium">{activeTab === 'debts' ? t.addDebt : t.addExpense}</span>
+                </button>
             </div>
           </header>
 
@@ -631,6 +723,76 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'debts' && (
+            <motion.div 
+              key="debts"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-slate-800">{t.debts}</h3>
+                  <button
+                    onClick={() => { setEditingDebt(null); setIsDebtFormOpen(true); }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl flex items-center gap-2"
+                  >
+                    <Plus size={16} />
+                    <span className="hidden sm:inline">{t.addDebt}</span>
+                  </button>
+                </div>
+
+                <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                  {debts.length > 0 ? (
+                    <div className="divide-y divide-slate-100">
+                      {debts.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((d) => (
+                        <motion.div 
+                          layout
+                          key={d.id}
+                          className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between group"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className="w-10">
+                              <div className="text-sm font-medium text-slate-700">{d.name}</div>
+                              <div className="text-xs text-slate-500">{format(parseISO(d.date), 'dd/MM/yyyy')}{d.dueDate ? ` • Due ${format(parseISO(d.dueDate), 'dd/MM/yyyy')}` : ''}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="text-lg font-bold text-slate-800">{formatCurrency(d.amount, language)}</div>
+                            <div className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">{d.type === 'owed' ? t.debtTypeOwed : t.debtTypeLent}</div>
+                            <div className={cn("text-xs px-2 py-1 rounded-full font-medium", d.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : d.status === 'overdue' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600')}>{d.status === 'paid' ? t.debtStatusPaid : d.status === 'overdue' ? t.debtStatusOverdue : t.debtStatusOpen}</div>
+                            <div className="flex items-center gap-1">
+                              <button 
+                                onClick={() => handleEditDebt(d)}
+                                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                              >
+                                <Edit2 size={18} />
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteDebt(d.id)}
+                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-12 text-center">
+                      <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+                        <Wallet size={32} />
+                      </div>
+                      <p className="text-slate-500 font-medium">{t.noDebts}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {activeTab === 'settings' && (
             <motion.div 
               key="settings"
@@ -725,6 +887,16 @@ export default function App() {
           <span className="hidden sm:inline">{t.expenses}</span>
         </button>
         <button 
+          onClick={() => setActiveTab('debts')}
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-xl transition-all font-medium",
+            activeTab === 'debts' ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200" : "text-slate-500 hover:bg-slate-100"
+          )}
+        >
+          <Wallet size={20} />
+          <span className="hidden sm:inline">{t.debts}</span>
+        </button>
+        <button 
           onClick={() => setActiveTab('settings')}
           className={cn(
             "flex items-center gap-2 px-4 py-2 rounded-xl transition-all font-medium",
@@ -812,6 +984,121 @@ export default function App() {
                   <button 
                     type="button"
                     onClick={() => setIsFormOpen(false)}
+                    className="flex-1 py-3 px-4 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50 transition-all"
+                  >
+                    {t.cancel}
+                  </button>
+                  <button 
+                    type="submit"
+                    className="flex-2 py-3 px-8 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-200 transition-all active:scale-95"
+                  >
+                    {t.save}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {isDebtFormOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsDebtFormOpen(false)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="text-xl font-bold text-slate-800">
+                  {editingDebt ? t.editDebt : t.addDebt}
+                </h3>
+                <button 
+                  onClick={() => setIsDebtFormOpen(false)}
+                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleAddDebt} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">Name</label>
+                  <input 
+                    required
+                    type="text"
+                    name="name"
+                    defaultValue={editingDebt?.name}
+                    placeholder="Person or entity"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">{t.amount}</label>
+                  <input 
+                    required
+                    type="number" 
+                    name="amount"
+                    defaultValue={editingDebt?.amount}
+                    placeholder="0.00"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-bold text-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">{t.date}</label>
+                  <input 
+                    required
+                    type="date" 
+                    name="date"
+                    defaultValue={editingDebt?.date || format(new Date(), 'yyyy-MM-dd')}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">Due date (optional)</label>
+                  <input 
+                    type="date" 
+                    name="dueDate"
+                    defaultValue={editingDebt?.dueDate || ''}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Type</label>
+                    <select name="type" defaultValue={editingDebt?.type || 'owed'} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl">
+                      <option value="owed">{t.debtTypeOwed}</option>
+                      <option value="lent">{t.debtTypeLent}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Status</label>
+                    <select name="status" defaultValue={editingDebt?.status || 'open'} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl">
+                      <option value="open">{t.debtStatusOpen}</option>
+                      <option value="paid">{t.debtStatusPaid}</option>
+                      <option value="overdue">{t.debtStatusOverdue}</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">{t.note}</label>
+                  <textarea 
+                    name="note"
+                    defaultValue={editingDebt?.note}
+                    rows={3}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+                  />
+                </div>
+                <div className="pt-4 flex gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => setIsDebtFormOpen(false)}
                     className="flex-1 py-3 px-4 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50 transition-all"
                   >
                     {t.cancel}
